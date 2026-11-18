@@ -35,7 +35,7 @@ def scrape_all_github_google():
         url = f"{base_url}?page={page}"
         print(f"--- ページ {page} を取得中: {url} ---")
         
-        time.sleep(1)
+        time.sleep(0.1)
         response = requests.get(url, headers=headers)
 
         if response.status_code != 200:
