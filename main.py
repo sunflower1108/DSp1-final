@@ -1,5 +1,6 @@
 import sqlite3
 import time
+import re
 import requests
 from bs4 import BeautifulSoup
 
@@ -20,18 +21,20 @@ def init_db(db_name="github_google_repos.db"):
 def scrape_all_github_google():
     base_url = "https://github.com/orgs/google/repositories"
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9"
     }
 
     repos_data = []
+    seen_repos = set()
     page = 1
 
-    print("全体スクレイピングを開始します")
+    print("全件スクレイピングを開始します...")
 
     while True:
         url = f"{base_url}?page={page}"
         print(f"--- ページ {page} を取得中: {url} ---")
-
+        
         time.sleep(1)
         response = requests.get(url, headers=headers)
 
@@ -41,31 +44,45 @@ def scrape_all_github_google():
 
         soup = BeautifulSoup(response.text, 'html.parser')
 
-        repo_list = soup.find_all('li', class_=lambda x: x and ('Box-row' in x or 'ListItem' in x))
-
-        if not repo_list:
-            print("これ以上のリポジトリが見つからないため、スクレイピングを終了します。")
-            break
+        repo_links = soup.find_all('a', href=re.compile(r'^/google/[^/]+$'))
 
         found_in_page = 0
-        for repo in repo_list:
-            name_tag = repo.find('a', itemprop='name codeRepository') or repo.find('a', href=lambda x: x and x.startswith('/google/') and x.count('/') == 2)
-            if not name_tag:
-                continue
-            repo_name = name_tag.text.strip()
+        for link in repo_links:
+            href = link.get('href', '')
+            repo_name = href.split('/')[-1]
 
-            lang_tag = repo.find('span', itemprop='programmingLanguage')
+            if repo_name in ['repositories', 'people', 'projects', 'packages', 'teams', 'sponsors'] or repo_name in seen_repos:
+                continue
+
+            container = link.find_parent('li') or link.find_parent('div', class_=re.compile(r'Box|ListItem|repo|row', re.I))
+            if not container:
+                container = link.parent.parent if link.parent else None
+
+            if not container:
+                continue
+
+            star_tag = container.find('a', href=f"{href}/stargazers")
+            if not star_tag:
+                continue
+
+            stars = star_tag.text.strip()
+
+            lang_tag = container.find('span', itemprop='programmingLanguage')
+            if not lang_tag:
+                lang_color = container.find('span', class_=re.compile(r'repo-language-color'))
+                if lang_color and lang_color.parent:
+                    lang_tag = lang_color.parent
+
             language = lang_tag.text.strip() if lang_tag else "N/A"
 
-            star_tag = repo.find('a', href=lambda x: x and x.endswith('/stargazers'))
-            stars = star_tag.text.strip() if star_tag else "0"
-
+            seen_repos.add(repo_name)
             repos_data.append((repo_name, language, stars))
             found_in_page += 1
 
         print(f"ページ {page}: {found_in_page} 件取得（累計: {len(repos_data)} 件）")
 
         if found_in_page == 0:
+            print("これ以上のリポジトリが見つからないため、スクレイピングを終了します。")
             break
 
         page += 1
@@ -104,7 +121,6 @@ if __name__ == "__main__":
     DB_NAME = "github_google_repos.db"
     
     init_db(DB_NAME)
-    
     scraped_data = scrape_all_github_google()
     
     if scraped_data:
