@@ -103,19 +103,29 @@ def save_to_db(data, db_name="github_google_repos.db"):
     conn.close()
     print(f"\n合計 {len(data)} 件のデータをデータベースに保存しました。")
 
-def display_stored_data(db_name="github_google_repos.db"):
+def display_stored_data(db_name="github_google_repos.db", output_file="result.txt"):
     conn = sqlite3.connect(db_name)
     cursor = conn.cursor()
 
-    print("\n=== 保存されたデータ (SELECT文の実行結果) ===")
     cursor.execute("SELECT id, repo_name, language, stars FROM repositories")
     rows = cursor.fetchall()
 
-    for row in rows:
-        print(f"ID: {row[0]} | リポジトリ名: {row[1]} | 言語: {row[2]} | スター数: {row[3]}")
+    with open(output_file, "w", encoding="utf-8") as f:
+        header = "=== 保存されたデータ (SELECT文の実行結果) ==="
+        print("\n" + header)
+        f.write(header + "\n")  
 
-    print(f"\n総レコード数: {len(rows)} 件")
+        for row in rows:
+            line = f"ID: {row[0]} | リポジトリ名: {row[1]} | 言語: {row[2]} | スター数: {row[3]}"
+            print(line)
+            f.write(line + "\n")
+
+        footer = f"\n総レコード数: {len(rows)} 件"
+        print(footer)
+        f.write(footer + "\n")
+
     conn.close()
+    print(f"実行結果を {output_file} に保存しました。")
 
 if __name__ == "__main__":
     DB_NAME = "github_google_repos.db"
