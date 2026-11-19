@@ -1,6 +1,5 @@
 import sqlite3
 import time
-import re
 import requests
 from bs4 import BeautifulSoup
 
@@ -25,67 +24,112 @@ def scrape_all_github_google():
         "Accept-Language": "en-US,en;q=0.9"
     }
 
+    session = requests.Session()
+    session.headers.update(headers)
+
     repos_data = []
     seen_repos = set()
-    page = 1
+
+    queries = [
+        "", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
+        "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
+        "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "-", "_"
+    ]
 
     print("全件スクレイピングを開始します...")
 
-    while True:
-        url = f"{base_url}?page={page}"
-        print(f"--- ページ {page} を取得中: {url} ---")
-        
-        time.sleep(0.1)
-        response = requests.get(url, headers=headers)
+    for q in queries:
+        page = 1
+        zero_new_streak = 0 
 
-        if response.status_code != 200:
-            print(f"アクセス制限またはエラーが発生しました (ステータスコード: {response.status_code})")
-            break
+        while True:
+            if q == "":
+                url = f"{base_url}?page={page}"
+            else:
+                url = f"{base_url}?q={q}&page={page}"
 
-        soup = BeautifulSoup(response.text, 'html.parser')
+            print(f"--- 取得中 (フィルタ='{q}', ページ={page}): {url} ---")
+            
+            time.sleep(1)
 
-        repo_links = soup.find_all('a', href=re.compile(r'^/google/[^/]+$'))
-
-        found_in_page = 0
-        for link in repo_links:
-            href = link.get('href', '')
-            repo_name = href.split('/')[-1]
-
-            if repo_name in ['repositories', 'people', 'projects', 'packages', 'teams', 'sponsors'] or repo_name in seen_repos:
+            try:
+                response = session.get(url, timeout=15)
+            except Exception as e:
+                print(f"通信が一時切断されました。10秒待機して再試行します... ({e})")
+                time.sleep(10)
                 continue
 
-            container = link.find_parent('li') or link.find_parent('div', class_=re.compile(r'Box|ListItem|repo|row', re.I))
-            if not container:
-                container = link.parent.parent if link.parent else None
-
-            if not container:
+            if response.status_code == 429:
+                print("アクセス制限(429)のため15秒待機して再試行します...")
+                time.sleep(15)
                 continue
+            elif response.status_code != 200:
+                print(f"ページ取得終了 (ステータスコード: {response.status_code})")
+                break
 
-            star_tag = container.find('a', href=f"{href}/stargazers")
-            if not star_tag:
-                continue
+            soup = BeautifulSoup(response.text, 'html.parser')
+            all_links = soup.find_all('a')
 
-            stars = star_tag.text.strip()
+            items_on_page = 0
+            new_in_page = 0
 
-            lang_tag = container.find('span', itemprop='programmingLanguage')
-            if not lang_tag:
-                lang_color = container.find('span', class_=re.compile(r'repo-language-color'))
-                if lang_color and lang_color.parent:
-                    lang_tag = lang_color.parent
+            for link in all_links:
+                href = link.get('href', '')
 
-            language = lang_tag.text.strip() if lang_tag else "N/A"
+                if not href.startswith('/google/') or href.count('/') != 2:
+                    continue
 
-            seen_repos.add(repo_name)
-            repos_data.append((repo_name, language, stars))
-            found_in_page += 1
+                repo_name = href.split('/')[-1]
 
-        print(f"ページ {page}: {found_in_page} 件取得（累計: {len(repos_data)} 件）")
+                if repo_name in ['repositories', 'people', 'projects', 'packages', 'teams', 'sponsors']:
+                    continue
 
-        if found_in_page == 0:
-            print("これ以上のリポジトリが見つからないため、スクレイピングを終了します。")
-            break
+                container = link.find_parent('li')
+                if not container and link.parent:
+                    container = link.parent.parent
+                if not container:
+                    continue
 
-        page += 1
+                star_tag = container.find('a', href=f"{href}/stargazers")
+                if not star_tag:
+                    continue
+
+                items_on_page += 1
+
+                if repo_name in seen_repos:
+                    continue
+
+                stars = star_tag.text.strip()
+
+                lang_tag = container.find('span', itemprop='programmingLanguage')
+                if not lang_tag:
+                    for span in container.find_all('span'):
+                        classes = span.get('class', [])
+                        if 'repo-language-color' in classes and span.parent:
+                            lang_tag = span.parent
+                            break
+
+                language = lang_tag.text.strip() if lang_tag else "N/A"
+
+                seen_repos.add(repo_name)
+                repos_data.append((repo_name, language, stars))
+                new_in_page += 1
+
+            print(f"新規取得: {new_in_page} 件 / ページ内: {items_on_page} 件（累計: {len(repos_data)} 件）")
+
+            if items_on_page == 0:
+                break
+
+            # 新規取得0件が3ページ連続したら、すでに取得済みの領域なので次のフィルタへ進む
+            if new_in_page == 0:
+                zero_new_streak += 1
+                if zero_new_streak >= 3:
+                    print(f"フィルタ='{q}' の新規データ取得が完了したため次へ進みます。")
+                    break
+            else:
+                zero_new_streak = 0
+
+            page += 1
 
     return repos_data
 
@@ -113,7 +157,7 @@ def display_stored_data(db_name="github_google_repos.db", output_file="result.tx
     with open(output_file, "w", encoding="utf-8") as f:
         header = "=== 保存されたデータ (SELECT文の実行結果) ==="
         print("\n" + header)
-        f.write(header + "\n")  
+        f.write(header + "\n")
 
         for row in rows:
             line = f"ID: {row[0]} | リポジトリ名: {row[1]} | 言語: {row[2]} | スター数: {row[3]}"
